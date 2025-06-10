@@ -2,38 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import axios from 'axios';
 
-// Add request/response interceptors for logging
-axios.interceptors.request.use(
-  (config) => {
-    console.log(`🔄 HTTP Request: ${config.method?.toUpperCase()} ${config.url}`);
-    if (config.params) {
-      console.log(`📋 Query params:`, config.params);
-    }
-    if (config.data) {
-      console.log(`📦 Request body:`, config.data);
-    }
-    return config;
-  },
-  (error) => {
-    console.error('❌ Request error:', error);
-    return Promise.reject(error);
-  }
-);
-
-axios.interceptors.response.use(
-  (response) => {
-    console.log(`✅ HTTP Response: ${response.status} ${response.statusText}`);
-    console.log(`📄 Response data:`, JSON.stringify(response.data, null, 2));
-    return response;
-  },
-  (error) => {
-    console.error('❌ Response error:', error.response?.status, error.response?.statusText);
-    if (error.response?.data) {
-      console.error('📄 Error response data:', error.response.data);
-    }
-    return Promise.reject(error);
-  }
-);
 
 // API Base URLs
 const COLLECTION_API_BASE = 'https://api-production.data.gov.sg/v2/public/api';
@@ -41,23 +9,6 @@ const DATASET_API_BASE = 'https://api-production.data.gov.sg/v2/public/api';
 const DATASTORE_API_BASE = 'https://data.gov.sg/api/action';
 const DOWNLOAD_API_BASE = 'https://api-open.data.gov.sg/v1/public/api';
 
-// Rate limiting helper
-const rateLimiter = {
-  lastRequestTime: 0,
-  minInterval: 12000, // 5 requests per minute = 1 request per 12 seconds
-  
-  async waitIfNeeded() {
-    const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    
-    if (timeSinceLastRequest < this.minInterval) {
-      const waitTime = this.minInterval - timeSinceLastRequest;
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-    
-    this.lastRequestTime = Date.now();
-  }
-};
 
 export default function createStatelessServer({ config }: { config: z.infer<typeof configSchema> }) {
   const server = new McpServer({
@@ -73,7 +24,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       page: z.number().min(1).optional().describe('Page number (optional)')
     },
     async ({ page }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${COLLECTION_API_BASE}/collections`;
@@ -112,7 +62,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       withDatasetMetadata: z.boolean().optional().describe('Include dataset metadata (default: false)')
     },
     async ({ collectionId, withDatasetMetadata }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${COLLECTION_API_BASE}/collections/${collectionId}/metadata`;
@@ -150,7 +99,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       page: z.number().min(1).optional().describe('Page number (optional)')
     },
     async ({ page }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${DATASET_API_BASE}/datasets`;
@@ -188,7 +136,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       datasetId: z.string().describe('The unique identifier of the dataset')
     },
     async ({ datasetId }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${DATASET_API_BASE}/datasets/${datasetId}/metadata`;
@@ -231,7 +178,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       sort: z.string().optional().describe('Comma-separated fields with ordering')
     },
     async ({ resource_id, limit, offset, fields, filters, q, sort }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${DATASTORE_API_BASE}/datastore_search`;
@@ -282,7 +228,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       })).optional().describe('Filters to apply to the dataset')
     },
     async ({ datasetId, columnNames, filters }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${DOWNLOAD_API_BASE}/datasets/${datasetId}/initiate-download`;
@@ -333,7 +278,6 @@ export default function createStatelessServer({ config }: { config: z.infer<type
       })).optional().describe('Filters (must match initiate_download)')
     },
     async ({ datasetId, columnNames, filters }) => {
-      await rateLimiter.waitIfNeeded();
       
       try {
         const url = `${DOWNLOAD_API_BASE}/datasets/${datasetId}/poll-download`;
