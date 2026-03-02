@@ -63,3 +63,9 @@ coverage/
 
 # Yarn Integrity file
 .yarn-integrity
+
+# Firebase credentials
+.credentials/
+
+# Analytics data
+data/

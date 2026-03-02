@@ -1,28 +1,56 @@
 {
-  "name": "gahmen-mcp",
+  "name": "mcp-datagovsg",
   "version": "1.0.0",
-  "module": "./src/index.ts",
+  "description": "MCP server for Singapore's data.gov.sg and SingStat APIs",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "type": "module",
+  "files": [
+    "dist/**/*",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "prestart": "npm run build",
+    "start": "node dist/http-server.js",
+    "start:http": "node dist/http-server.js",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
+    "dev": "npx @smithery/cli@1.2.14 dev",
+    "dev:http": "tsx src/http-server.ts",
+    "test": "npm run typecheck",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write src/**/*.ts",
     "format:check": "prettier --check src/**/*.ts",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "Aniruddha Adhikary",
+  "keywords": [
+    "mcp",
+    "singapore",
+    "data-gov-sg",
+    "singstat",
+    "open-data",
+    "government-data"
+  ],
+  "author": "hithereiamaliff",
   "license": "MIT",
-  "description": "MCP server for Singapore's data.gov.sg and SingStat APIs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hithereiamaliff/mcp-datagovsg.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
     "axios": "^1.9.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "express": "^4.21.0",
+    "firebase-admin": "^13.6.0",
     "zod": "^3.25.57"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
     "@types/node": "^22.15.31",
     "@typescript-eslint/eslint-plugin": "^8.34.0",
     "@typescript-eslint/parser": "^8.34.0",
@@ -32,5 +60,8 @@
     "prettier": "^3.5.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
