@@ -22,6 +22,7 @@ import {
   requireCatalog,
 } from './utils/catalog-index.js';
 import { round, truncate } from './utils/format.js';
+import { detectPlace, placeGuide } from './utils/places.js';
 import { REALTIME_APIS } from './utils/realtime-catalog.js';
 import { makeField, recencyBoost, scoreDocument } from './utils/search.js';
 import { datagovsgTool, registerReadOnlyTool, ToolContext } from './utils/tool-helpers.js';
@@ -89,7 +90,7 @@ export function registerSearchTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Search all Singapore open data',
       description:
-        '⭐ START HERE for any question about Singapore government data. One search across: (1) all ~4,600 data.gov.sg datasets and their collections, (2) real-time APIs (weather, rainfall, air quality/PSI, UV, heat stress, lightning, flood alerts, radar, HDB carparks, taxis, traffic cameras), and (3) SingStat Table Builder statistics (GDP, CPI, population, labour...). Every result includes `next_step`: the exact tool and arguments to call next.',
+        '⭐ START HERE for any question about Singapore government data. One search across: (1) all ~4,600 data.gov.sg datasets and their collections, (2) real-time APIs (weather, rainfall, air quality/PSI, UV, heat stress, lightning, flood alerts, radar, HDB carparks, taxis, traffic cameras), and (3) SingStat Table Builder statistics (GDP, CPI, population, labour...). Every result includes `next_step`: the exact tool and arguments to call next. When the query names a town or planning area (e.g. "Woodlands"), a `place_guide` lists ready-to-run location calls and SingStat tables broken down by planning area.',
       inputSchema: {
         query: z
           .string()
@@ -125,6 +126,7 @@ export function registerSearchTools(server: McpServer, ctx: ToolContext) {
           ])
         : Promise.resolve(undefined);
       const [catalog, singstat] = await Promise.all([getCatalog(), singstatSearch]);
+      const place = detectPlace(query);
 
       const results: UnifiedResult[] = [];
 
@@ -185,9 +187,15 @@ export function registerSearchTools(server: McpServer, ctx: ToolContext) {
 
       let singstatMatches = 0;
       if (singstat && 'tables' in singstat) {
-        // SingStat also matches on row/variable text, which can be noisy
-        // ("weather" -> merchandise trade tables); keep only relevant titles
-        const relevant = singstat.tables.filter((table) => table.score > 0);
+        // SingStat also matches on row/variable text, which is usually noise
+        // ("weather" -> merchandise trade tables), so keep only tables whose
+        // title is relevant. Exception: for a place query ("Woodlands"), tables
+        // broken down "by Planning Area/Subzone" list the place as a row.
+        const byArea = (title: string) => /planning area|subzone/i.test(title);
+        const relevant = singstat.tables
+          .filter((table) => table.score > 0 || (place && byArea(table.title)))
+          .map((table) => ({ ...table, score: table.score > 0 ? table.score : 3 }))
+          .sort((a, b) => b.score - a.score);
         singstatMatches = relevant.length;
         for (const table of relevant.slice(0, Math.ceil(limit / 2))) {
           results.push({
@@ -230,6 +238,8 @@ export function registerSearchTools(server: McpServer, ctx: ToolContext) {
 
       return {
         query,
+        // Place queries get ready-to-run location tool calls first
+        place_guide: place ? placeGuide(place) : undefined,
         matches: {
           realtime_apis: results.filter((r) => r.type === 'realtime_api').length,
           datasets: datasetMatches,
