@@ -6,7 +6,8 @@
  * credentials file is missing.
  */
 
-import admin from 'firebase-admin';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { Database, getDatabase } from 'firebase-admin/database';
 import fs from 'fs';
 import path from 'path';
 
@@ -17,7 +18,7 @@ const FIREBASE_ANALYTICS_PATH = '/mcp-analytics/mcp-datagovsg';
 
 let initialised = false;
 let attempted = false;
-let db: admin.database.Database | null = null;
+let db: Database | null = null;
 
 function initialiseFirebase(): boolean {
   if (initialised) return true;
@@ -42,13 +43,13 @@ function initialiseFirebase(): boolean {
     }
 
     const serviceAccount = JSON.parse(fs.readFileSync(credentialPath, 'utf-8'));
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
+    if (getApps().length === 0) {
+      initializeApp({
+        credential: cert(serviceAccount),
         databaseURL: FIREBASE_DATABASE_URL,
       });
     }
-    db = admin.database();
+    db = getDatabase();
     initialised = true;
     console.log('[firebase] Analytics persistence enabled');
     return true;
