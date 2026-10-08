@@ -1,5 +1,6 @@
-# Singapore Data MCP Server - Docker Compose
-# For self-hosting on VPS at mcp.techmavie.digital/datagovsg
+# Singapore Open Data MCP Server - Docker Compose
+# Self-hosted on the VPS at https://mcp.techmavie.digital/datagovsg/mcp
+# See deploy/DEPLOYMENT.md for first-time setup.
 
 services:
   mcp-datagovsg:
@@ -7,24 +8,27 @@ services:
     container_name: mcp-datagovsg
     restart: unless-stopped
     ports:
-      - "8087:8080"
+      # Localhost only: nginx on the host proxies /datagovsg/ to this port
+      - "127.0.0.1:8096:8080"
     environment:
       - PORT=8080
       - HOST=0.0.0.0
       - NODE_ENV=production
-      - ANALYTICS_DIR=/app/data
+      - DATA_DIR=/app/data
     env_file:
       - .env
     volumes:
-      - analytics-data:/app/data
+      # Analytics backup + data.gov.sg catalogue index (survives rebuilds)
+      - datagovsg-data:/app/data
       - ./.credentials:/app/.credentials:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     networks:
+      # Shared with mcp-key-service, reachable as http://mcp-key-service:8090
       - mcp-network
     logging:
       driver: "json-file"
@@ -34,8 +38,8 @@ services:
 
 networks:
   mcp-network:
-    driver: bridge
+    external: true
 
 volumes:
-  analytics-data:
+  datagovsg-data:
     driver: local

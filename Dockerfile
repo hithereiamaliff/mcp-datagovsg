@@ -1,43 +1,40 @@
-# Singapore Data MCP Server - Streamable HTTP
-# For self-hosting on VPS with nginx reverse proxy
+# Singapore Open Data MCP Server - Streamable HTTP
+# Self-hosted on the VPS behind nginx at https://mcp.techmavie.digital/datagovsg/mcp
 
-FROM node:20-alpine
-
+# ---- Build stage ----
+FROM node:24-alpine AS build
 WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
-
-# Install ALL dependencies (including devDependencies for build)
-# Skip prepare script since source files aren't copied yet
 RUN npm ci --ignore-scripts
 
-# Copy source code and configuration
 COPY tsconfig.json ./
 COPY src/ ./src/
+RUN npm run build && npm prune --omit=dev
 
-# Build TypeScript
-RUN npm run build
+# ---- Runtime stage ----
+FROM node:24-alpine
+WORKDIR /app
 
-# Remove devDependencies after build
-RUN npm prune --production
+ENV NODE_ENV=production \
+    PORT=8080 \
+    HOST=0.0.0.0 \
+    DATA_DIR=/app/data
 
-# Create non-root user for security
+COPY package.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+
+# Non-root user; /app/data holds analytics + the catalogue index (Docker volume)
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S mcp -u 1001
-RUN chown -R mcp:nodejs /app
+    adduser -S mcp -u 1001 -G nodejs && \
+    mkdir -p /app/data && chown -R mcp:nodejs /app/data
 USER mcp
 
-# Expose port for HTTP server
 EXPOSE 8080
 
-# Environment variables (can be overridden at runtime)
-ENV PORT=8080
-ENV HOST=0.0.0.0
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+# busybox wget is available in alpine images
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
-# Start the HTTP server
 CMD ["node", "dist/http-server.js"]

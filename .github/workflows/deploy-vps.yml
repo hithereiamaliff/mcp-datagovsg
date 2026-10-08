@@ -1,0 +1,80 @@
+name: CI and Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: Typecheck, lint and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  deploy:
+    name: Deploy to VPS
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            set -e
+            cd /opt/mcp-servers/datagovsg
+
+            # Fails loudly (instead of discarding) if the VPS checkout was edited by hand
+            git pull --ff-only origin main
+
+            # .env is created once by hand (see deploy/DEPLOYMENT.md); never overwritten here
+            if [ ! -f .env ]; then
+              echo "❌ /opt/mcp-servers/datagovsg/.env is missing. See deploy/DEPLOYMENT.md"
+              exit 1
+            fi
+
+            # Shared Firebase credentials for analytics (optional)
+            mkdir -p .credentials
+            if [ ! -f .credentials/firebase-service-account.json ] && [ -f ../.credentials/firebase-service-account.json ]; then
+              cp ../.credentials/firebase-service-account.json .credentials/
+              echo "✅ Firebase credentials copied from parent directory"
+            fi
+            # Container runs as uid 1001
+            chown -R 1001:1001 .credentials 2>/dev/null || echo "⚠️ Could not chown .credentials (Firebase may be disabled)"
+
+            # Shared network with mcp-key-service
+            docker network inspect mcp-network >/dev/null 2>&1 || docker network create mcp-network
+
+            docker compose build
+            docker compose up -d --remove-orphans
+
+            # Wait for the health check
+            for i in $(seq 1 20); do
+              if curl -fsS http://127.0.0.1:8096/health >/dev/null; then
+                echo "✅ Healthy"
+                curl -fsS http://127.0.0.1:8096/health
+                docker image prune -f >/dev/null
+                echo
+                echo "🚀 Deployment completed at $(date)"
+                exit 0
+              fi
+              sleep 3
+            done
+            echo "❌ Health check failed"
+            docker compose logs --tail 60
+            exit 1
