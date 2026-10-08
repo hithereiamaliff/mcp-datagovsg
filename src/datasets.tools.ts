@@ -87,6 +87,10 @@ const DATASET_ID = z
 
 const NUMERIC_TYPES = new Set(['numeric', 'int', 'int4', 'int8', 'float', 'float4', 'float8']);
 
+/** CKAN bookkeeping columns: _id always, plus _full_count and rank[ <col>] when q is used */
+const isInternalColumn = (name: string) =>
+  name.startsWith('_') || name === 'rank' || name.startsWith('rank ');
+
 export async function fetchDatasetMetadata(
   datasetId: string,
   auth: ApiAuth
@@ -417,15 +421,17 @@ export function registerDatasetTools(server: McpServer, ctx: ToolContext) {
         unwrap: unwrapCkan,
       });
 
-      let columns = result.fields.filter((f) => typeof f.id === 'string' && f.id !== '_id');
-      if (columns.length === 0 || columns.length < result.fields.length - 1) {
+      let columns = result.fields.filter(
+        (f) => typeof f.id === 'string' && !isInternalColumn(f.id)
+      );
+      if (columns.length === 0 || result.fields.some((f) => typeof f.id !== 'string')) {
         // Upstream drops field metadata when `fields` is set: rebuild it from
         // the requested names (or the record keys) plus the cached schema
         const schema = await getDatastoreSchema(dataset_id, ctx.auth);
         const typeOf = new Map(schema.map((f) => [f.id, f.type]));
         const names = fieldList ?? Object.keys(result.records[0] ?? {});
         columns = names
-          .filter((name) => name !== '_id')
+          .filter((name) => !isInternalColumn(name))
           .map((name) => ({ id: name, type: typeOf.get(name) ?? 'text' }));
       }
       const numeric = new Set(columns.filter((f) => NUMERIC_TYPES.has(f.type)).map((f) => f.id));
