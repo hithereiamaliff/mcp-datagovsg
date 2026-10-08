@@ -16,6 +16,7 @@ import { apiCache } from './cache.js';
 import { isInSingapore, LatLng } from './geo.js';
 import { UpstreamError } from './http-client.js';
 import { SlidingWindowLimiter } from './rate-limiter.js';
+import { tokenize } from './search.js';
 
 const ONEMAP_SEARCH_URL = 'https://www.onemap.gov.sg/api/common/elastic/search';
 const GEOCODE_TTL_MS = 7 * 24 * 60 * 60_000;
@@ -87,20 +88,53 @@ export async function geocodePlace(query: string): Promise<ResolvedPlace | null>
     }
 
     const results = (response.data as { results?: OneMapResult[] }).results ?? [];
-    for (const result of results) {
-      const point = { latitude: Number(result.LATITUDE), longitude: Number(result.LONGITUDE) };
-      if (!Number.isFinite(point.latitude) || !isInSingapore(point)) continue;
-      return {
-        ...point,
-        query: q,
-        name: result.SEARCHVAL ?? q,
-        address: result.ADDRESS,
-        postal_code: result.POSTAL && result.POSTAL !== 'NIL' ? result.POSTAL : undefined,
-        source: 'OneMap (SLA)' as const,
-      };
-    }
-    return null;
+    const best = pickBestResult(q, results);
+    if (!best) return null;
+    return {
+      latitude: Number(best.LATITUDE),
+      longitude: Number(best.LONGITUDE),
+      query: q,
+      name: best.SEARCHVAL ?? q,
+      address: best.ADDRESS,
+      postal_code: best.POSTAL && best.POSTAL !== 'NIL' ? best.POSTAL : undefined,
+      source: 'OneMap (SLA)' as const,
+    };
   });
+}
+
+// Words that don't make a result name less specific ("TAMPINES MRT STATION")
+const GENERIC_WORDS = new Set(['station', 'singapore', 'the', 'building', 'blk', 'block']);
+
+/**
+ * OneMap's own ranking is not always the most natural match: "Tampines MRT"
+ * returns Tampines EAST MRT and station exits before Tampines MRT itself.
+ * Re-rank its first page so the result whose name is closest to the query
+ * wins, keeping OneMap's order as the tie-breaker.
+ */
+function pickBestResult(query: string, results: OneMapResult[]): OneMapResult | undefined {
+  const valid = results.filter((r) => {
+    const point = { latitude: Number(r.LATITUDE), longitude: Number(r.LONGITUDE) };
+    return Number.isFinite(point.latitude) && isInSingapore(point);
+  });
+  if (valid.length === 0) return undefined;
+
+  // Postal codes: prefer the exact postal match
+  if (/^\d{6}$/.test(query)) return valid.find((r) => r.POSTAL === query) ?? valid[0];
+
+  const queryWords = tokenize(query);
+  const wantsExit = queryWords.includes('exit');
+  let best: { result: OneMapResult; score: number } | undefined;
+  valid.forEach((result, index) => {
+    // Drop line codes like "(DT33)" or "(EW2 / DT32)" before comparing
+    const nameWords = tokenize((result.SEARCHVAL ?? '').replace(/\([^)]*\)/g, ' '));
+    const nameSet = new Set(nameWords);
+    const matched = queryWords.filter((w) => nameSet.has(w)).length;
+    const extra = nameWords.filter((w) => !queryWords.includes(w) && !GENERIC_WORDS.has(w)).length;
+    let score = matched * 10 - extra - index * 0.01;
+    if (!wantsExit && nameSet.has('exit')) score -= 5;
+    if (!best || score > best.score) best = { result, score };
+  });
+  return best?.result;
 }
 
 /**
