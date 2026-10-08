@@ -19,6 +19,33 @@ const DELAY_MS = parseInt(process.env.SMOKE_DELAY_MS || '1500', 10);
 const CASES = [
   ['datagovsg_hello', {}],
   ['datagovsg_search_all', { query: 'hdb resale prices', limit: 5 }],
+  [
+    'datagovsg_search_all',
+    { query: 'Woodlands', limit: 8 },
+    (r) =>
+      r.place_guide?.suggestions?.length >= 4 && r.matches.singstat_tables > 0
+        ? null
+        : 'place-aware search missing guide or planning-area tables',
+  ],
+  [
+    'datagovsg_search_all',
+    { query: 'Marsiling', limit: 5, include_singstat: false },
+    (r) => (r.place_guide?.kind === 'estate in Woodlands' ? null : 'estate not detected'),
+  ],
+  [
+    'datagovsg_query_dataset',
+    {
+      dataset_id: 'd_8b84c4ee58e3cfc0ece0d773c8ca6abc',
+      filters: { town: 'WOODLANDS' },
+      q: { street_name: 'MARSILING' },
+      sort: 'month desc',
+      limit: 2,
+    },
+    (r) =>
+      r.rows?.length === 2 && !r.columns.some((c) => c.name.startsWith('_') || c.name.startsWith('rank'))
+        ? null
+        : `internal columns leaked: ${r.columns?.map((c) => c.name)}`,
+  ],
   ['datagovsg_search_datasets', { query: 'school', format: 'CSV', limit: 3 }],
   ['datagovsg_search_datasets', { agency: 'National Environment Agency', format: 'GEOJSON', limit: 3 }],
   ['datagovsg_list_collections', { query: 'resale', limit: 3 }],
