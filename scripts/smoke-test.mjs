@@ -9,6 +9,8 @@
  *   MCP_URL=http://localhost:8080/mcp?api_key=usr_xxx npm run smoke
  *
  * Calls are spaced out so anonymous rate limits are not exceeded.
+ * Each case may include a check(result) that returns an error string when the
+ * content is wrong (a call that "succeeds" with empty data still fails).
  */
 
 const MCP_URL = process.env.MCP_URL || 'http://localhost:8080/mcp';
@@ -30,10 +32,25 @@ const CASES = [
       sort: 'month desc',
       limit: 3,
     },
+    (r) => (r.rows?.length === 3 && Object.keys(r.rows[0]).length >= 5 ? null : 'expected 3 full rows'),
   ],
   [
     'datagovsg_query_dataset',
     { dataset_id: 'd_8b84c4ee58e3cfc0ece0d773c8ca6abc', fields: ['month', 'town', 'resale_price'], limit: 3, format: 'csv' },
+    (r) => {
+      const lines = (r.csv ?? '').split('\n');
+      return lines[0] === 'month,town,resale_price' && lines.length === 4 && /^\d{4}-\d{2},.+,\d+$/.test(lines[1])
+        ? null
+        : `unexpected csv: ${JSON.stringify(r.csv)}`;
+    },
+  ],
+  [
+    'datagovsg_query_dataset',
+    { dataset_id: 'd_8b84c4ee58e3cfc0ece0d773c8ca6abc', fields: 'month,resale_price', sort: 'resale_price desc', limit: 2 },
+    (r) =>
+      typeof r.rows?.[0]?.resale_price === 'number' && r.rows[0].month
+        ? null
+        : `fields rows empty or untyped: ${JSON.stringify(r.rows)}`,
   ],
   [
     'datagovsg_get_download_url',
@@ -55,12 +72,36 @@ const CASES = [
   ['datagovsg_get_flood_alerts', {}],
   ['datagovsg_get_weather_radar', { range: '240km' }],
   ['datagovsg_get_current_conditions', { area: 'Tampines' }],
+  [
+    'datagovsg_get_current_conditions',
+    { area: 'Orchard' },
+    (r) => (r.location?.place && r.location?.forecast_area ? null : 'Orchard not resolved via place lookup'),
+  ],
+  [
+    'datagovsg_get_weather_forecast',
+    { period: '2h', area: '560123' },
+    (r) => (r.forecast && r.resolved_place ? null : 'postal code not resolved'),
+  ],
   ['datagovsg_get_carpark_availability', { latitude: 1.3016, longitude: 103.8547, radius_km: 0.5, limit: 3 }],
+  [
+    'datagovsg_get_carpark_availability',
+    { place: 'Bishan MRT', radius_km: 1, limit: 3 },
+    (r) => (r.carparks?.length > 0 && r.resolved_place ? null : 'no carparks near Bishan MRT'),
+  ],
   ['datagovsg_get_taxi_availability', { latitude: 1.3016, longitude: 103.8547 }],
+  [
+    'datagovsg_get_taxi_availability',
+    { place: 'Raffles Place' },
+    (r) => (typeof r.available_within_radius === 'number' ? null : 'place not used for taxi search'),
+  ],
   ['datagovsg_get_traffic_images', { limit: 2 }],
   ['singstat_search_tables', { keyword: 'gdp growth', limit: 3 }],
   ['singstat_get_table_metadata', { resource_id: 'M015721', max_series: 3 }],
-  ['singstat_get_table_data', { resource_id: 'M015721', series: ['1'], time_filter: ['2023', '2024', '2025'] }],
+  [
+    'singstat_get_table_data',
+    { resource_id: 'M015721', series: ['1'], time_filter: ['2023', '2024', '2025'] },
+    (r) => (Object.keys(r.series?.[0]?.values ?? {}).length === 3 ? null : 'expected 3 yearly values'),
+  ],
 ];
 
 let id = 0;
@@ -86,7 +127,7 @@ const tools = await rpc('tools/list', {});
 console.log(`Connected to ${MCP_URL}: ${tools.tools.length} tools\n`);
 
 let failed = 0;
-for (const [name, args] of CASES) {
+for (const [name, args, check] of CASES) {
   const started = Date.now();
   try {
     const result = await rpc('tools/call', { name, arguments: args });
@@ -96,7 +137,13 @@ for (const [name, args] of CASES) {
       failed++;
       console.log(`FAIL ${name} (${ms}ms) ${text.slice(0, 300)}`);
     } else {
-      console.log(`ok   ${name} (${ms}ms, ${text.length} chars) ${text.slice(0, 160)}`);
+      const problem = check ? check(JSON.parse(text)) : null;
+      if (problem) {
+        failed++;
+        console.log(`FAIL ${name} (${ms}ms) content check: ${problem}`);
+      } else {
+        console.log(`ok   ${name} (${ms}ms, ${text.length} chars) ${text.slice(0, 160)}`);
+      }
     }
   } catch (error) {
     failed++;
