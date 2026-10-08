@@ -78,6 +78,6 @@ Other notes:
 - Firebase drops empty objects, so always normalise loaded data with defaults (see `normalise()`).
 
 ## Deployment
-- VPS path `/opt/mcp-servers/datagovsg`, container `mcp-datagovsg`, host port `127.0.0.1:8096`, nginx `location /datagovsg/`.
+- VPS path `/opt/mcp-servers/datagovsg`, container `mcp-datagovsg`, host port `127.0.0.1:8098`, nginx `location /datagovsg/`.
 - External Docker network `mcp-network`, shared with mcp-key-service.
 - GitHub Actions (`.github/workflows/deploy-vps.yml`): CI on push/PR, SSH deploy on `main`. `.env` on the VPS is created by hand and never overwritten by the workflow.

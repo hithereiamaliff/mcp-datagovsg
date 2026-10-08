@@ -65,9 +65,9 @@ jobs:
 
             # Wait for the health check
             for i in $(seq 1 20); do
-              if curl -fsS http://127.0.0.1:8096/health >/dev/null; then
+              if curl -fsS http://127.0.0.1:8098/health >/dev/null; then
                 echo "✅ Healthy"
-                curl -fsS http://127.0.0.1:8096/health
+                curl -fsS http://127.0.0.1:8098/health
                 docker image prune -f >/dev/null
                 echo
                 echo "🚀 Deployment completed at $(date)"

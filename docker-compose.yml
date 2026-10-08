@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     ports:
       # Localhost only: nginx on the host proxies /datagovsg/ to this port
-      - "127.0.0.1:8096:8080"
+      - "127.0.0.1:8098:8080"
     environment:
       - PORT=8080
       - HOST=0.0.0.0

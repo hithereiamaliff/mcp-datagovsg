@@ -5,7 +5,7 @@ Production endpoint: `https://mcp.techmavie.digital/datagovsg/mcp`
 ## Architecture
 
 ```
-MCP client ──HTTPS──> nginx (/datagovsg/) ──> 127.0.0.1:8096 ──> container mcp-datagovsg:8080
+MCP client ──HTTPS──> nginx (/datagovsg/) ──> 127.0.0.1:8098 ──> container mcp-datagovsg:8080
                                                                    │
                                                                    ├── data.gov.sg / SingStat APIs (x-api-key: DATAGOVSG_API_KEY)
                                                                    └── mcp-key-service:8090 (only for usr_ keys, via Docker network mcp-network)
@@ -15,7 +15,7 @@ MCP client ──HTTPS──> nginx (/datagovsg/) ──> 127.0.0.1:8096 ──>
 |------|-------|
 | VPS path | `/opt/mcp-servers/datagovsg` |
 | Container | `mcp-datagovsg` |
-| Host port | `127.0.0.1:8096` (localhost only) |
+| Host port | `127.0.0.1:8098` (localhost only) |
 | Docker network | `mcp-network` (external, shared with mcp-key-service) |
 | Data volume | `datagovsg-data` → `/app/data` (analytics backup, catalogue index) |
 | Firebase path | `/mcp-analytics/mcp-datagovsg` |
@@ -31,10 +31,10 @@ MCP client ──HTTPS──> nginx (/datagovsg/) ──> 127.0.0.1:8096 ──>
 ### 2. Check the port is free
 
 ```bash
-ss -ltnp | grep 8096 || echo "8096 is free"
+ss -ltnp | grep 8098 || echo "8098 is free"
 ```
 
-If it is taken, change `127.0.0.1:8096` in `docker-compose.yml`, `deploy/nginx-mcp.conf` and the health check URL in `.github/workflows/deploy-vps.yml`.
+If it is taken, change `127.0.0.1:8098` in `docker-compose.yml`, `deploy/nginx-mcp.conf` and the health check URL in `.github/workflows/deploy-vps.yml`.
 
 ### 3. Clone and configure
 
@@ -88,7 +88,7 @@ chown -R 1001:1001 .credentials   # container runs as uid 1001
 ```bash
 docker network inspect mcp-network >/dev/null 2>&1 || docker network create mcp-network
 docker compose up -d --build
-curl -s http://127.0.0.1:8096/health
+curl -s http://127.0.0.1:8098/health
 ```
 
 The first start crawls the data.gov.sg catalogue (~20 seconds) for dataset search; it is saved to the volume, so later restarts are instant.
