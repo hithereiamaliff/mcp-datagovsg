@@ -2,8 +2,7 @@
   "name": "mcp-datagovsg",
   "version": "2.0.0",
   "description": "MCP server for Singapore open data: data.gov.sg datasets, real-time weather/environment/transport APIs, and SingStat Table Builder",
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
+  "main": "./dist/http-server.js",
   "type": "module",
   "files": [
     "dist/**/*",
@@ -17,7 +16,7 @@
     "start": "node dist/http-server.js",
     "start:http": "node dist/http-server.js",
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc",
-    "dev": "npx @smithery/cli@1.2.14 dev",
+    "dev": "tsx src/http-server.ts",
     "dev:http": "tsx src/http-server.ts",
     "test": "npm run typecheck",
     "smoke": "node scripts/smoke-test.mjs",

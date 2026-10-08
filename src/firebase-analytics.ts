@@ -1,159 +1,125 @@
 /**
- * Firebase Analytics Persistence Module
+ * Firebase Realtime Database persistence for analytics.
  *
- * Provides cloud-based analytics storage using Firebase Realtime Database.
- * Falls back gracefully if Firebase credentials are not configured.
+ * Stores one analytics document at /mcp-analytics/mcp-datagovsg.
+ * Disabled gracefully when FIREBASE_DATABASE_URL or the service account
+ * credentials file is missing.
  */
 
 import admin from 'firebase-admin';
 import fs from 'fs';
 import path from 'path';
 
-// Firebase configuration
-const FIREBASE_DATABASE_URL =
-  process.env.FIREBASE_DATABASE_URL ||
-  'https://techmavie-mcp-analytics-default-rtdb.asia-southeast1.firebasedatabase.app';
+const FIREBASE_DATABASE_URL = (process.env.FIREBASE_DATABASE_URL || '').trim();
 const FIREBASE_CREDENTIALS_PATH =
-  process.env.FIREBASE_CREDENTIALS_PATH ||
-  '.credentials/firebase-service-account.json';
+  process.env.FIREBASE_CREDENTIALS_PATH || '.credentials/firebase-service-account.json';
 const FIREBASE_ANALYTICS_PATH = '/mcp-analytics/mcp-datagovsg';
 
-let firebaseInitialized = false;
+let initialised = false;
+let attempted = false;
 let db: admin.database.Database | null = null;
 
-/**
- * Initialize Firebase Admin SDK
- */
-function initializeFirebase(): boolean {
-  if (firebaseInitialized) return true;
+function initialiseFirebase(): boolean {
+  if (initialised) return true;
+  if (attempted) return false;
+  attempted = true;
+
+  if (!FIREBASE_DATABASE_URL) {
+    console.log('[firebase] FIREBASE_DATABASE_URL not set. Firebase analytics disabled.');
+    return false;
+  }
 
   try {
-    // Try multiple credential paths
-    const credentialPaths = [
+    const candidates = [
       FIREBASE_CREDENTIALS_PATH,
       '/app/.credentials/firebase-service-account.json',
       path.join(process.cwd(), '.credentials/firebase-service-account.json'),
     ];
-
-    let credentialPath: string | null = null;
-    for (const p of credentialPaths) {
-      if (fs.existsSync(p)) {
-        credentialPath = p;
-        break;
-      }
-    }
-
+    const credentialPath = candidates.find((p) => fs.existsSync(p));
     if (!credentialPath) {
-      console.log(
-        'Firebase credentials not found. Firebase analytics disabled.'
-      );
+      console.log('[firebase] Credentials not found. Firebase analytics disabled.');
       return false;
     }
 
-    const serviceAccount = JSON.parse(
-      fs.readFileSync(credentialPath, 'utf-8')
-    );
-
+    const serviceAccount = JSON.parse(fs.readFileSync(credentialPath, 'utf-8'));
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         databaseURL: FIREBASE_DATABASE_URL,
       });
     }
-
     db = admin.database();
-    firebaseInitialized = true;
-    console.log('Firebase analytics initialized successfully');
+    initialised = true;
+    console.log('[firebase] Analytics persistence enabled');
     return true;
   } catch (error) {
-    console.error('Failed to initialize Firebase:', error);
+    console.error('[firebase] Failed to initialise:', error);
     return false;
   }
 }
 
-/**
- * Sanitize keys for Firebase (Firebase doesn't allow . $ # [ ] / in keys)
- */
-function sanitizeKey(key: string): string {
-  return key
-    .replace(/\./g, '_dot_')
-    .replace(/\$/g, '_dollar_')
-    .replace(/#/g, '_hash_')
-    .replace(/\[/g, '_lb_')
-    .replace(/\]/g, '_rb_')
-    .replace(/\//g, '_slash_');
+export function isFirebaseEnabled(): boolean {
+  return initialiseFirebase();
 }
 
-/**
- * Sanitize all keys in an object recursively
- */
-function sanitizeObject(obj: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(obj)) {
-    const sanitizedKey = sanitizeKey(key);
-    if (
-      value &&
-      typeof value === 'object' &&
-      !Array.isArray(value)
-    ) {
-      sanitized[sanitizedKey] = sanitizeObject(value as Record<string, unknown>);
-    } else {
-      sanitized[sanitizedKey] = value;
+// Firebase keys may not contain . $ # [ ] /
+const ENCODE: [RegExp, string][] = [
+  [/\./g, '_dot_'],
+  [/\$/g, '_dollar_'],
+  [/#/g, '_hash_'],
+  [/\[/g, '_lb_'],
+  [/\]/g, '_rb_'],
+  [/\//g, '_slash_'],
+];
+const DECODE: [RegExp, string][] = [
+  [/_dot_/g, '.'],
+  [/_dollar_/g, '$'],
+  [/_hash_/g, '#'],
+  [/_lb_/g, '['],
+  [/_rb_/g, ']'],
+  [/_slash_/g, '/'],
+];
+
+function mapKeys(value: unknown, rules: [RegExp, string][]): unknown {
+  if (Array.isArray(value)) return value.map((item) => mapKeys(item, rules));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, inner] of Object.entries(value)) {
+      const mapped = rules.reduce(
+        (k, [pattern, replacement]) => k.replace(pattern, replacement),
+        key
+      );
+      out[mapped] = mapKeys(inner, rules);
     }
+    return out;
   }
-  return sanitized;
+  return value;
 }
 
-/**
- * Save analytics data to Firebase
- */
-export async function saveAnalyticsToFirebase(
-  analytics: Record<string, unknown>
-): Promise<void> {
-  if (!initializeFirebase() || !db) return;
-
+export async function saveAnalyticsToFirebase(analytics: Record<string, unknown>): Promise<void> {
+  if (!initialiseFirebase() || !db) return;
   try {
-    const sanitizedAnalytics = sanitizeObject(analytics);
-    sanitizedAnalytics.lastUpdated = new Date().toISOString();
-
-    await db.ref(FIREBASE_ANALYTICS_PATH).set(sanitizedAnalytics);
+    const encoded = mapKeys(analytics, ENCODE) as Record<string, unknown>;
+    encoded.lastUpdated = new Date().toISOString();
+    await db.ref(FIREBASE_ANALYTICS_PATH).set(encoded);
   } catch (error) {
-    console.error('Failed to save analytics to Firebase:', error);
+    console.error('[firebase] Failed to save analytics:', error);
   }
 }
 
-/**
- * Load analytics data from Firebase
- */
-export async function loadAnalyticsFromFirebase(): Promise<Record<
-  string,
-  unknown
-> | null> {
-  if (!initializeFirebase() || !db) return null;
-
+export async function loadAnalyticsFromFirebase(): Promise<Record<string, unknown> | null> {
+  if (!initialiseFirebase() || !db) return null;
   try {
     const snapshot = await db.ref(FIREBASE_ANALYTICS_PATH).get();
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      console.log('Loaded analytics from Firebase');
-
-      // Provide fallback defaults for all object/array fields
-      // Firebase does not store empty objects {}, so they return as undefined
-      return {
-        ...data,
-        requestsByMethod: data.requestsByMethod || {},
-        requestsByEndpoint: data.requestsByEndpoint || {},
-        toolCalls: data.toolCalls || {},
-        recentToolCalls: data.recentToolCalls || [],
-        clientsByIp: data.clientsByIp || {},
-        clientsByUserAgent: data.clientsByUserAgent || {},
-        hourlyRequests: data.hourlyRequests || {},
-      };
+    if (!snapshot.exists()) {
+      console.log('[firebase] No analytics stored yet');
+      return null;
     }
-    console.log('No analytics data found in Firebase');
-    return null;
+    console.log('[firebase] Loaded analytics');
+    // Callers fill defaults: Firebase drops empty objects, so they come back undefined
+    return mapKeys(snapshot.val(), DECODE) as Record<string, unknown>;
   } catch (error) {
-    console.error('Failed to load analytics from Firebase:', error);
+    console.error('[firebase] Failed to load analytics:', error);
     return null;
   }
 }
