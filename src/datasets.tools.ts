@@ -126,6 +126,26 @@ async function getDatasetFormat(
   return { format: (meta.format || 'UNKNOWN').toUpperCase(), name: meta.name };
 }
 
+/**
+ * Column names and types of a datastore table (cached for hours).
+ * Needed because datastore_search returns empty field metadata ([{}, {}])
+ * whenever the `fields` parameter is used.
+ */
+async function getDatastoreSchema(
+  datasetId: string,
+  auth: ApiAuth
+): Promise<{ id: string; type: string }[]> {
+  const result = await apiGet<DatastoreResult>({
+    category: 'datastore',
+    url: `${API_BASES.datastore}/datastore_search`,
+    params: { resource_id: datasetId, limit: 1 },
+    ttlMs: CACHE_TTL.metadata,
+    auth,
+    unwrap: unwrapCkan,
+  });
+  return result.fields.filter((f) => typeof f.id === 'string');
+}
+
 /** Error for datasets that cannot be queried row-by-row. */
 function notQueryable(datasetId: string, format: string): UpstreamError {
   const realtime = REALTIME_BY_DATASET_ID.get(datasetId);
@@ -205,7 +225,10 @@ export function registerDatasetTools(server: McpServer, ctx: ToolContext) {
         agency: meta.managedBy,
         sources: meta.sources,
         frequency: meta.frequency,
-        coverage: { start: meta.coverageStart, end: meta.coverageEnd },
+        coverage:
+          meta.coverageStart || meta.coverageEnd
+            ? { start: meta.coverageStart, end: meta.coverageEnd }
+            : undefined,
         last_updated: meta.lastUpdatedAt,
         dataset_count: datasetIds.length,
         datasets: datasetIds.map((datasetId) => {
@@ -280,7 +303,10 @@ export function registerDatasetTools(server: McpServer, ctx: ToolContext) {
         description: truncate(meta.description, 1200),
         format,
         agency: meta.managedBy,
-        coverage: { start: meta.coverageStart, end: meta.coverageEnd },
+        coverage:
+          meta.coverageStart || meta.coverageEnd
+            ? { start: meta.coverageStart, end: meta.coverageEnd }
+            : undefined,
         last_updated: meta.lastUpdatedAt,
         size_bytes: meta.datasetSize,
         collections: (meta.collectionIds ?? []).map((id) => ({
@@ -391,7 +417,17 @@ export function registerDatasetTools(server: McpServer, ctx: ToolContext) {
         unwrap: unwrapCkan,
       });
 
-      const columns = result.fields.filter((f) => f.id !== '_id');
+      let columns = result.fields.filter((f) => typeof f.id === 'string' && f.id !== '_id');
+      if (columns.length === 0 || columns.length < result.fields.length - 1) {
+        // Upstream drops field metadata when `fields` is set: rebuild it from
+        // the requested names (or the record keys) plus the cached schema
+        const schema = await getDatastoreSchema(dataset_id, ctx.auth);
+        const typeOf = new Map(schema.map((f) => [f.id, f.type]));
+        const names = fieldList ?? Object.keys(result.records[0] ?? {});
+        columns = names
+          .filter((name) => name !== '_id')
+          .map((name) => ({ id: name, type: typeOf.get(name) ?? 'text' }));
+      }
       const numeric = new Set(columns.filter((f) => NUMERIC_TYPES.has(f.type)).map((f) => f.id));
       const rows = result.records.map((record) => {
         const row: Record<string, unknown> = {};
