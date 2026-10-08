@@ -33,6 +33,7 @@ Docker (VPS): `docker compose up -d --build`, `docker compose logs -f`. Deployme
   - `unwrapPlain`: v1 transport
   - `unwrapSingstat`: `{Data, StatusCode: 200}`
 - `rate-limiter.ts`: per (key, API family) sliding window using the limits in `config.ts` (`RATE_LIMITS`).
+- `geocode.ts`: OneMap search (no token) turns place names/postal codes into coordinates. OneMap 429s on bursts, so calls are paced at ~1/s and cached 7 days. Location tools take `place` via the shared `PLACE_INPUT` + `resolveOrigin()`; `area` in forecast/current-conditions tries NEA area names first, then OneMap.
 - `cache.ts`: shared TTL cache keyed by URL+params+body. Not keyed by API key, since the data is public.
 - `catalog-index.ts`: data.gov.sg has **no search API**. The server crawls all `/datasets` and `/collections` pages (~600 requests, ~15s), saves them to `DATA_DIR/catalog-index.json` and refreshes daily, serving the stale copy while it refreshes.
 - `tool-helpers.ts` `registerReadOnlyTool()`: wraps `registerTool` with read-only annotations. Handlers return plain objects, and thrown errors become `isError` results with hints.
@@ -64,6 +65,7 @@ Other notes:
 - 429 bodies have `code: 24` and no Retry-After header. Invalid keys are silently treated as anonymous.
 - Download filters go in a **JSON body on a GET request**. Node's built-in fetch can't send that, so axios is used. Poll with the same body. Non-CSV files skip initiate.
 - Datastore values come back as strings. Only columns typed `numeric`/`int4` are converted, which keeps leading zeros in postal codes.
+- With the `fields` param, datastore_search returns correct records but **empty field metadata** (`[{}, {}]`). `query_dataset` rebuilds columns from the requested names plus a cached `limit=1` schema lookup (`limit=0` returns junk).
 - Real-time `date` param: `YYYY-MM-DD` gives a paginated day (`paginationToken`), `YYYY-MM-DDTHH:mm:ss` gives that moment.
 - Lightning and WBGT live at `/weather?api=lightning|wbgt`; flood alerts at `/weather/flood-alerts`.
 

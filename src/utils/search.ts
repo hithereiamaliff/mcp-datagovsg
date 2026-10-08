@@ -207,15 +207,26 @@ export function recencyBoost(lastUpdatedAt?: string): number {
   return 1;
 }
 
-/** Fuzzy match a name against a list of candidates (case/space-insensitive). */
-export function findBestName(input: string, candidates: string[]): string | undefined {
+/**
+ * Fuzzy match a name against a list of candidates (case/space-insensitive).
+ * With allowWordOverlap=false only exact or containment matches count, so
+ * "Jurong Bird Park" does not loosely match "Jurong East".
+ */
+export function findBestName(
+  input: string,
+  candidates: string[],
+  options: { allowWordOverlap?: boolean } = {}
+): string | undefined {
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
   const target = norm(input);
   if (!target) return undefined;
   const exact = candidates.find((c) => norm(c) === target);
   if (exact) return exact;
-  const contains = candidates.filter((c) => norm(c).includes(target) || target.includes(norm(c)));
+  const contains = candidates.filter(
+    (c) => (target.length >= 3 && norm(c).includes(target)) || target.includes(norm(c))
+  );
   if (contains.length > 0) return contains.sort((x, y) => x.length - y.length)[0];
+  if (options.allowWordOverlap === false) return undefined;
   // Word-level overlap as a last resort
   const inputWords = new Set(tokenize(input));
   let best: { name: string; overlap: number } | undefined;

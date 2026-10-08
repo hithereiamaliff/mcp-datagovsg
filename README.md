@@ -18,6 +18,7 @@ This is **not** an official MCP server from the Government of Singapore, GovTech
 - **Transport**: HDB carpark availability searchable by address or location, taxi availability near a point, traffic cameras.
 - **Dataset querying**: typed rows with filters, sorting and pagination, CSV output, and one-call download links (including GeoJSON map data).
 - **Official statistics**: SingStat search with automatic word fallback, table metadata and filtered data.
+- **Place names everywhere**: location-aware tools accept landmarks, MRT stations, buildings and postal codes ("Orchard", "Jewel Changi", "560123") via OneMap, not just coordinates.
 - **Historical queries**: real-time tools accept a past `date`.
 - **Rate-limit aware**: requests are queued under data.gov.sg limits, cached, and retried after a 429.
 - **Bring your own key (optional)**: use your own data.gov.sg API key through the [MCP Key Service](https://mcpkeys.techmavie.digital) for a separate quota.
@@ -231,6 +232,7 @@ src/
 | data.gov.sg real-time | `api-open.data.gov.sg/v2/real-time/api` | Weather, environment, floods, radar |
 | data.gov.sg transport | `api.data.gov.sg/v1/transport` | Carparks, taxis, traffic images |
 | SingStat Table Builder | `tablebuilder.singstat.gov.sg/api/table` | Official statistics |
+| OneMap (SLA) | `www.onemap.gov.sg/api/common/elastic/search` | Place name and postal code lookup |
 
 Data from data.gov.sg is provided under the [Singapore Open Data Licence v1.0](https://data.gov.sg/open-data-licence). Tool responses include a `source` field for attribution.
 
@@ -265,5 +267,6 @@ MIT. See [LICENSE](LICENSE).
 - [data.gov.sg](https://data.gov.sg/), Singapore's open data portal (Open Government Products)
 - [SingStat Table Builder](https://tablebuilder.singstat.gov.sg/), Department of Statistics Singapore
 - [National Environment Agency](https://www.nea.gov.sg/), [PUB](https://www.pub.gov.sg/), [HDB](https://www.hdb.gov.sg/) and [LTA](https://www.lta.gov.sg/) for the real-time data
+- [OneMap](https://www.onemap.gov.sg/) by the Singapore Land Authority for place lookups
 - [aniruddha-adhikary/gahmen-mcp](https://github.com/aniruddha-adhikary/gahmen-mcp), the original MCP server this project started from
 - [Model Context Protocol](https://modelcontextprotocol.io/)

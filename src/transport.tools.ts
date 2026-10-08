@@ -12,8 +12,9 @@ import { z } from 'zod';
 import { API_BASES, CACHE_TTL, DATAGOVSG_SOURCE } from './config.js';
 import { apiCache } from './utils/cache.js';
 import { parseNum, toList } from './utils/format.js';
-import { LatLng, sortByDistance, svy21ToWgs84 } from './utils/geo.js';
-import { ApiAuth, apiGet, unwrapCkan, unwrapPlain, UpstreamError } from './utils/http-client.js';
+import { sortByDistance, svy21ToWgs84 } from './utils/geo.js';
+import { describePlace, PLACE_INPUT, resolveOrigin } from './utils/geocode.js';
+import { ApiAuth, apiGet, unwrapCkan, unwrapPlain } from './utils/http-client.js';
 import { tokenize } from './utils/search.js';
 import { datagovsgTool, registerReadOnlyTool, ToolContext } from './utils/tool-helpers.js';
 
@@ -104,14 +105,6 @@ function normaliseDateTime(value?: string): string | undefined {
   return /T\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
 }
 
-function originFrom(latitude?: number, longitude?: number): LatLng | undefined {
-  if (latitude === undefined && longitude === undefined) return undefined;
-  if (latitude === undefined || longitude === undefined) {
-    throw new UpstreamError('Provide both latitude and longitude', 400, 'BAD_LOCATION');
-  }
-  return { latitude, longitude };
-}
-
 async function fetchTransport<T>(auth: ApiAuth, path: string, dateTime?: string): Promise<T> {
   const date_time = normaliseDateTime(dateTime);
   return apiGet<T>({
@@ -171,8 +164,9 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get HDB carpark availability',
       description:
-        'Get live available lots at HDB carparks (~2,000 carparks, updated every minute), with address, coordinates, parking system, free/night parking and gantry height. Find carparks near a latitude/longitude, by address/street/block (e.g. "Ang Mo Kio Ave 3", "Blk 270"), or by carpark number. Only HDB carparks are covered (not malls/private).',
+        'Get live available lots at HDB carparks (~2,000 carparks, updated every minute), with address, coordinates, parking system, free/night parking and gantry height. Find carparks near a place (landmark, MRT station, postal code) or latitude/longitude, by address/street/block (e.g. "Ang Mo Kio Ave 3", "Blk 270"), or by carpark number. Only HDB carparks are covered (not malls/private).',
       inputSchema: {
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         radius_km: z
@@ -180,7 +174,7 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
           .min(0.1)
           .max(5)
           .optional()
-          .describe('Search radius around latitude/longitude (default 0.5 km)'),
+          .describe('Search radius around the place or latitude/longitude (default 0.5 km)'),
         address: z
           .string()
           .optional()
@@ -211,6 +205,7 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
       errorContext: 'Failed to get carpark availability',
     },
     async ({
+      place,
       latitude,
       longitude,
       radius_km = 0.5,
@@ -221,9 +216,10 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
       limit = 10,
       date_time,
     }) => {
-      const [availability, info] = await Promise.all([
+      const [availability, info, { origin, resolved_place }] = await Promise.all([
         fetchTransport<CarparkAvailabilityData>(ctx.auth, 'carpark-availability', date_time),
         getCarparkInfo(ctx.auth),
+        resolveOrigin({ place, latitude, longitude }),
       ]);
       const item = availability.items?.[0];
       if (!item) return { message: 'No carpark availability data for that time' };
@@ -260,7 +256,6 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
         0
       );
       const numbers = toList(carpark_numbers)?.map((n) => n.toUpperCase());
-      const origin = originFrom(latitude, longitude);
       const hasFilter = Boolean(numbers || address || origin);
 
       if (numbers)
@@ -296,6 +291,7 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
 
       return {
         timestamp: item.timestamp,
+        resolved_place: describePlace(resolved_place),
         singapore_summary: {
           carparks: totalCarparks,
           [`available_${lot_type}_lots`]: totalAvailable,
@@ -304,7 +300,7 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
         returned: Math.min(limit, results.length),
         carparks: hasFilter ? results.slice(0, limit) : undefined,
         note: !hasFilter
-          ? 'Pass latitude/longitude, address or carpark_numbers to list specific carparks.'
+          ? 'Pass place, latitude/longitude, address or carpark_numbers to list specific carparks.'
           : results.length === 0
             ? origin
               ? `No HDB carparks found within ${radius_km} km. Try a larger radius_km.`
@@ -322,8 +318,9 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get taxi availability',
       description:
-        'Get the number of available taxis in Singapore (updated every 30 seconds). With latitude/longitude, also counts available taxis within a radius and lists the nearest ones.',
+        'Get the number of available taxis in Singapore (updated every 30 seconds). With a place or latitude/longitude, also counts available taxis within a radius and lists the nearest ones.',
       inputSchema: {
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         radius_km: z
@@ -343,13 +340,16 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
       },
       errorContext: 'Failed to get taxi availability',
     },
-    async ({ latitude, longitude, radius_km = 1, nearest = 5, date_time }) => {
-      const data = await fetchTransport<TaxiData>(ctx.auth, 'taxi-availability', date_time);
+    async ({ place, latitude, longitude, radius_km = 1, nearest = 5, date_time }) => {
+      const [data, { origin, resolved_place }] = await Promise.all([
+        fetchTransport<TaxiData>(ctx.auth, 'taxi-availability', date_time),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const feature = data.features?.[0];
       if (!feature) return { message: 'No taxi availability data for that time' };
-      const origin = originFrom(latitude, longitude);
       const result: Record<string, unknown> = {
         timestamp: feature.properties.timestamp,
+        resolved_place: describePlace(resolved_place),
         available_taxis_singapore: feature.properties.taxi_count,
       };
       if (origin) {
@@ -380,6 +380,7 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
           .union([z.array(z.string()), z.string()])
           .optional()
           .describe('Camera IDs to return, e.g. ["2701", "4703"]'),
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         limit: z
@@ -393,8 +394,11 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
       },
       errorContext: 'Failed to get traffic images',
     },
-    async ({ camera_ids, latitude, longitude, limit = 20, date_time }) => {
-      const data = await fetchTransport<TrafficImagesData>(ctx.auth, 'traffic-images', date_time);
+    async ({ camera_ids, place, latitude, longitude, limit = 20, date_time }) => {
+      const [data, { origin, resolved_place }] = await Promise.all([
+        fetchTransport<TrafficImagesData>(ctx.auth, 'traffic-images', date_time),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const item = data.items?.[0];
       if (!item) return { message: 'No traffic images for that time' };
       let cameras = item.cameras.map((c) => ({
@@ -409,10 +413,10 @@ export function registerTransportTools(server: McpServer, ctx: ToolContext) {
       }));
       const ids = toList(camera_ids);
       if (ids) cameras = cameras.filter((c) => ids.includes(c.camera_id));
-      const origin = originFrom(latitude, longitude);
       const ordered = origin ? sortByDistance(cameras, origin, (c) => c) : cameras;
       return {
         timestamp: item.timestamp,
+        resolved_place: describePlace(resolved_place),
         cameras_available: item.cameras.length,
         returned: Math.min(limit, ordered.length),
         cameras: ordered.slice(0, limit),

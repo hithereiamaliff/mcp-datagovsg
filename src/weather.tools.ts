@@ -11,6 +11,13 @@ import { z } from 'zod';
 import { API_BASES, CACHE_TTL, DATAGOVSG_SOURCE } from './config.js';
 import { nowSgt, parseNum, round, summarise } from './utils/format.js';
 import { distanceKm, LatLng, sortByDistance } from './utils/geo.js';
+import {
+  describePlace,
+  geocodePlace,
+  PLACE_INPUT,
+  ResolvedPlace,
+  resolveOrigin,
+} from './utils/geocode.js';
 import { ApiAuth, apiGet, unwrapOgp, UpstreamError } from './utils/http-client.js';
 import { findBestName } from './utils/search.js';
 import { datagovsgTool, registerReadOnlyTool, ToolContext } from './utils/tool-helpers.js';
@@ -224,14 +231,6 @@ function toLatLng(lat?: number | string, lng?: number | string): LatLng | undefi
   return latitude !== undefined && longitude !== undefined ? { latitude, longitude } : undefined;
 }
 
-function originFrom(latitude?: number, longitude?: number): LatLng | undefined {
-  if (latitude === undefined && longitude === undefined) return undefined;
-  if (latitude === undefined || longitude === undefined) {
-    throw new UpstreamError('Provide both latitude and longitude', 400, 'BAD_LOCATION');
-  }
-  return { latitude, longitude };
-}
-
 const COMPASS = [
   'N',
   'NNE',
@@ -344,23 +343,45 @@ const getLightning = (auth: ApiAuth, date?: string) =>
     date,
   });
 
-function resolveArea(input: string, data: TwoHourData) {
-  const names = data.area_metadata.map((a) => a.name);
-  const match = findBestName(input, names);
-  if (!match) {
-    throw new UpstreamError(
-      `Unknown forecast area "${input}"`,
-      400,
-      'UNKNOWN_AREA',
-      `Valid areas: ${names.join(', ')}. Or pass latitude/longitude instead.`
-    );
-  }
-  return data.area_metadata.find((a) => a.name === match)!;
-}
+type ForecastArea = TwoHourData['area_metadata'][number];
 
 function nearestArea(origin: LatLng, data: TwoHourData) {
   const sorted = sortByDistance(data.area_metadata, origin, (a) => a.label_location);
   return sorted[0];
+}
+
+/**
+ * Resolve user input to one of NEA's 47 forecast areas.
+ * 1. Direct match on an area name ("Bishan", "jurong west")
+ * 2. Otherwise look the place up on OneMap ("Orchard", "Jewel Changi",
+ *    "560123") and use the nearest forecast area
+ * 3. Otherwise a loose word match, else an error listing valid areas
+ */
+async function resolveAreaOrPlace(
+  input: string,
+  data: TwoHourData
+): Promise<{ area: ForecastArea; distance_km?: number; place?: ResolvedPlace }> {
+  const names = data.area_metadata.map((a) => a.name);
+  const byName = (name: string) => data.area_metadata.find((a) => a.name === name)!;
+
+  const direct = findBestName(input, names, { allowWordOverlap: false });
+  if (direct) return { area: byName(direct) };
+
+  const place = await geocodePlace(input).catch(() => null);
+  if (place) {
+    const near = nearestArea(place, data);
+    if (near) return { area: near, distance_km: near.distance_km, place };
+  }
+
+  const loose = findBestName(input, names);
+  if (loose) return { area: byName(loose) };
+
+  throw new UpstreamError(
+    `Could not find "${input}" in Singapore`,
+    400,
+    'UNKNOWN_AREA',
+    `Try a landmark, MRT station or 6-digit postal code, one of the forecast areas (${names.join(', ')}), or latitude/longitude.`
+  );
 }
 
 function wbgtRows(readings: WbgtReading[]) {
@@ -405,7 +426,9 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
         area: z
           .string()
           .optional()
-          .describe('2h only: area/town name, e.g. "Bishan", "Jurong West", "Changi"'),
+          .describe(
+            '2h only: town, area, landmark or postal code, e.g. "Bishan", "Orchard", "Jewel Changi", "560123". Mapped to the nearest of NEA\'s 47 forecast areas.'
+          ),
         latitude: LATITUDE,
         longitude: LONGITUDE,
         region: z.enum(REGIONS).optional().describe('24h only: limit to one region'),
@@ -417,12 +440,16 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
     async ({ period = '2h', area, latitude, longitude, region, date, pagination_token }) => {
       if (period === '2h') {
         const data = await getTwoHour(ctx.auth, date, pagination_token);
-        const origin = originFrom(latitude, longitude);
-        const target = area
-          ? { ...resolveArea(area, data), distance_km: undefined as number | undefined }
-          : origin
-            ? nearestArea(origin, data)
-            : undefined;
+        let target: { name: string; label_location: LatLng; distance_km?: number } | undefined;
+        let resolvedPlace: ResolvedPlace | undefined;
+        if (area) {
+          const resolved = await resolveAreaOrPlace(area, data);
+          target = { ...resolved.area, distance_km: resolved.distance_km };
+          resolvedPlace = resolved.place;
+        } else {
+          const { origin } = await resolveOrigin({ latitude, longitude });
+          target = origin ? nearestArea(origin, data) : undefined;
+        }
 
         const items = [...data.items].sort(
           (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)
@@ -450,6 +477,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
                 distance_km: target.distance_km,
               }
             : undefined,
+          resolved_place: describePlace(resolvedPlace),
           ...(isWholeDay(date)
             ? { forecasts_by_time: shaped }
             : (shaped[0] ?? { message: 'No forecast available' })),
@@ -551,6 +579,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
         metric: z
           .enum(['temperature', 'rainfall', 'humidity', 'wind_speed', 'wind_direction'])
           .describe('Which measurement to return'),
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         nearest: z
@@ -559,7 +588,9 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
           .min(1)
           .max(20)
           .optional()
-          .describe('With latitude/longitude: how many nearest stations to return (default 3)'),
+          .describe(
+            'With place or latitude/longitude: how many nearest stations to return (default 3)'
+          ),
         station: z
           .string()
           .optional()
@@ -569,9 +600,20 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       },
       errorContext: 'Failed to get weather readings',
     },
-    async ({ metric, latitude, longitude, nearest = 3, station, date, pagination_token }) => {
-      const data = await getStationMetric(ctx.auth, metric, date, pagination_token);
-      const origin = originFrom(latitude, longitude);
+    async ({
+      metric,
+      place,
+      latitude,
+      longitude,
+      nearest = 3,
+      station,
+      date,
+      pagination_token,
+    }) => {
+      const [data, { origin, resolved_place }] = await Promise.all([
+        getStationMetric(ctx.auth, metric, date, pagination_token),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const unit = data.readingUnit;
 
       const selectStations = <
@@ -616,6 +658,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
           metric,
           unit,
           timestamp: snapshot.timestamp,
+          resolved_place: describePlace(resolved_place),
           station_count: snapshot.rows.length,
           singapore_summary: {
             ...summarise(values),
@@ -660,6 +703,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
         metric,
         unit,
         date,
+        resolved_place: describePlace(resolved_place),
         stations: focus.length > 0 ? focus.map(({ value: _v, ...rest }) => rest) : undefined,
         series_mode: focusIds.size > 0 ? 'per_station' : 'singapore_min_max_avg',
         points: series.length,
@@ -683,14 +727,19 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
         'Get the latest (or historical) air quality: 24-hour PSI with health band (Good/Moderate/Unhealthy/Very unhealthy/Hazardous) and NEA activity advice, 1-hour PM2.5 band, and pollutant concentrations (PM2.5, PM10, SO2, CO, O3, NO2) for north/south/east/west/central regions. Use this for haze questions.',
       inputSchema: {
         region: z.enum(REGIONS).optional().describe('Only this region'),
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         date: DATE_INPUT,
       },
       errorContext: 'Failed to get air quality',
     },
-    async ({ region, latitude, longitude, date }) => {
-      const [psi, pm25] = await Promise.all([getPsi(ctx.auth, date), getPm25(ctx.auth, date)]);
+    async ({ region, place, latitude, longitude, date }) => {
+      const [psi, pm25, { origin, resolved_place }] = await Promise.all([
+        getPsi(ctx.auth, date),
+        getPm25(ctx.auth, date),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const latestPsi = [...psi.items].sort(
         (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)
       )[0];
@@ -699,7 +748,6 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       )[0];
       if (!latestPsi) return { message: 'No PSI readings available for that time' };
 
-      const origin = originFrom(latitude, longitude);
       const focusRegion =
         region ?? (origin ? nearestRegion(origin, psi.regionMetadata) : undefined);
       const pick = (values?: Record<string, number>) =>
@@ -714,6 +762,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
         timestamp: latestPsi.timestamp,
         updated: latestPsi.updatedTimestamp,
         region: focusRegion ?? 'all',
+        resolved_place: describePlace(resolved_place),
         psi_24h: focusRegion
           ? { value: psi24[focusRegion], band: psiBand(psi24[focusRegion]) }
           : Object.fromEntries(
@@ -788,8 +837,9 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get heat stress (WBGT)',
       description:
-        'Get Wet Bulb Globe Temperature (WBGT) heat stress readings from ~30 stations with NEA heat stress levels (Low < 31°C, Moderate 31-33°C, High >= 33°C). Useful for outdoor activity and exercise planning. Filter by nearest to latitude/longitude or by station/town name.',
+        'Get Wet Bulb Globe Temperature (WBGT) heat stress readings from ~30 stations with NEA heat stress levels (Low < 31°C, Moderate 31-33°C, High >= 33°C). Useful for outdoor activity and exercise planning. Filter by nearest to a place or latitude/longitude, or by station/town name.',
       inputSchema: {
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         nearest: z
@@ -807,15 +857,17 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       },
       errorContext: 'Failed to get heat stress readings',
     },
-    async ({ latitude, longitude, nearest = 3, station, date }) => {
-      const data = await getWbgt(ctx.auth, date);
+    async ({ place, latitude, longitude, nearest = 3, station, date }) => {
+      const [data, { origin, resolved_place }] = await Promise.all([
+        getWbgt(ctx.auth, date),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const record = [...data.records].sort(
         (a, b) => Date.parse(b.datetime) - Date.parse(a.datetime)
       )[0];
       if (!record) return { message: 'No heat stress readings available for that time' };
       let rows = wbgtRows(record.item.readings);
       const all = rows;
-      const origin = originFrom(latitude, longitude);
       if (station) {
         const needle = station.toLowerCase();
         rows = rows.filter((r) =>
@@ -833,6 +885,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       for (const r of all) levels[r.heat_stress] = (levels[r.heat_stress] || 0) + 1;
       return {
         timestamp: record.datetime,
+        resolved_place: describePlace(resolved_place),
         station_count: all.length,
         stations_by_level: levels,
         readings: rows,
@@ -850,8 +903,9 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get lightning observations',
       description:
-        'Get recent lightning strikes detected over Singapore. Optionally count strikes within a radius of a latitude/longitude (useful for outdoor safety).',
+        'Get recent lightning strikes detected over Singapore. Optionally count strikes within a radius of a place or latitude/longitude (useful for outdoor safety).',
       inputSchema: {
+        place: PLACE_INPUT,
         latitude: LATITUDE,
         longitude: LONGITUDE,
         radius_km: z
@@ -864,14 +918,16 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       },
       errorContext: 'Failed to get lightning observations',
     },
-    async ({ latitude, longitude, radius_km = 10, date }) => {
-      const data = await getLightning(ctx.auth, date);
+    async ({ place, latitude, longitude, radius_km = 10, date }) => {
+      const [data, { origin, resolved_place }] = await Promise.all([
+        getLightning(ctx.auth, date),
+        resolveOrigin({ place, latitude, longitude }),
+      ]);
       const records = [...data.records].sort(
         (a, b) => Date.parse(b.datetime) - Date.parse(a.datetime)
       );
       const latest = records[0];
       if (!latest) return { message: 'No lightning observations available for that time' };
-      const origin = originFrom(latitude, longitude);
 
       const strikes = records.flatMap((r) =>
         r.item.readings.map((reading) => ({ observed: r.datetime, ...reading }))
@@ -887,6 +943,7 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
 
       return {
         latest_observation: latest.datetime,
+        resolved_place: describePlace(resolved_place),
         observations_checked: records.length,
         strikes_total: strikes.length,
         ...(origin ? { radius_km, strikes_within_radius: located.length } : {}),
@@ -987,12 +1044,14 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
     {
       title: 'Get current conditions for a place',
       description:
-        'One-call summary of current conditions for a Singapore area or coordinates: 2-hour forecast, nearest temperature/humidity/rain/wind readings, PSI and PM2.5 band, UV index, heat stress (WBGT) and active flood alerts. Without a location, gives an island-wide summary. Best for "what\'s the weather like in X right now?"',
+        'One-call summary of current conditions for any place in Singapore: 2-hour forecast, nearest temperature/humidity/rain/wind readings, PSI and PM2.5 band, UV index, heat stress (WBGT) and active flood alerts. Without a location, gives an island-wide summary. Best for "what\'s the weather like in X right now?"',
       inputSchema: {
         area: z
           .string()
           .optional()
-          .describe('Area or town name, e.g. "Tampines", "Orchard", "Jurong East"'),
+          .describe(
+            'Town, area, landmark, MRT station or postal code, e.g. "Tampines", "Orchard", "Marina Bay Sands", "560123"'
+          ),
         latitude: LATITUDE,
         longitude: LONGITUDE,
       },
@@ -1001,12 +1060,15 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
     async ({ area, latitude, longitude }) => {
       const auth = ctx.auth;
       const twoHour = await getTwoHour(auth);
-      let origin = originFrom(latitude, longitude);
+      let { origin } = await resolveOrigin({ latitude, longitude });
       let areaInfo: { name: string; distance_km?: number } | undefined;
+      let resolvedPlace: ResolvedPlace | undefined;
       if (area) {
-        const match = resolveArea(area, twoHour);
-        origin = origin ?? match.label_location;
-        areaInfo = { name: match.name };
+        const match = await resolveAreaOrPlace(area, twoHour);
+        // Prefer exact coordinates of a looked-up place over the area's label point
+        origin = origin ?? match.place ?? match.area.label_location;
+        areaInfo = { name: match.area.name, distance_km: match.distance_km };
+        resolvedPlace = match.place;
       } else if (origin) {
         const near = nearestArea(origin, twoHour);
         areaInfo = near ? { name: near.name, distance_km: near.distance_km } : undefined;
@@ -1101,7 +1163,9 @@ export function registerWeatherTools(server: McpServer, ctx: ToolContext) {
       return {
         location: origin
           ? {
-              area: areaInfo?.name,
+              place: resolvedPlace ? resolvedPlace.name : undefined,
+              address: resolvedPlace?.address,
+              forecast_area: areaInfo?.name,
               latitude: origin.latitude,
               longitude: origin.longitude,
               psi_region: region,

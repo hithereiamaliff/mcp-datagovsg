@@ -9,7 +9,7 @@ All tools are read-only. Responses are compact JSON; errors set `isError: true` 
 3. **Before querying a dataset, get its columns** with `datagovsg_get_dataset_metadata`. Filters are exact and case-sensitive (e.g. `"town": "BISHAN"`).
 4. **Use `filters` rather than `q`** in `datagovsg_query_dataset`; plain-text `q` totals can be approximate.
 5. **For SingStat tables**, filter by `series` and `time_filter`. `limit` counts data points, not rows.
-6. **Locations**: tools that take `latitude`/`longitude` only accept coordinates inside Singapore. Forecast tools also take area names such as "Bishan" or "Jurong West".
+6. **Locations**: location-aware tools take `place` (landmark, MRT station, building, road or 6-digit postal code, looked up via OneMap) or `latitude`/`longitude` inside Singapore. The forecast and current-conditions tools take the same kinds of names in `area`. Responses include `resolved_place` so you can confirm what was matched.
 
 ---
 
