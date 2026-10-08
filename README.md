@@ -1,41 +1,44 @@
-# Singapore Data MCP Server
+# Singapore Open Data MCP
 
 **MCP Endpoint:** `https://mcp.techmavie.digital/datagovsg/mcp`
 
 **Analytics Dashboard:** [`https://mcp.techmavie.digital/datagovsg/analytics/dashboard`](https://mcp.techmavie.digital/datagovsg/analytics/dashboard)
 
-MCP (Model Context Protocol) server for Singapore's data.gov.sg and SingStat APIs, providing easy access to government datasets, collections, and statistical tables.
+MCP (Model Context Protocol) server for Singapore's open data: every [data.gov.sg](https://data.gov.sg) dataset, the real-time weather, environment and transport APIs, and official statistics from [SingStat Table Builder](https://tablebuilder.singstat.gov.sg).
 
-> This is a fork of [AniruddhaAdhikary/gahmen-mcp](https://github.com/AniruddhaAdhikary/gahmen-mcp), now maintained and improved by [@hithereiamaliff](https://github.com/hithereiamaliff).
+This is **not** an official MCP server from the Government of Singapore, GovTech, Open Government Products or the Department of Statistics.
+
+> Originally forked from [aniruddha-adhikary/gahmen-mcp](https://github.com/aniruddha-adhikary/gahmen-mcp); rebuilt in v2 by [@hithereiamaliff](https://github.com/hithereiamaliff).
 
 ## Features
 
-- **Data.gov.sg Collections & Datasets** - Browse, search, and download Singapore government open data
-- **CKAN Datastore Search** - Query datasets with filtering, sorting, and full-text search
-- **SingStat Table Builder** - Access Department of Statistics Singapore tables and data cubes
-- **Dataset Downloads** - Initiate and poll filtered dataset downloads
-- **Multi-Transport** - Supports both Smithery (stdio) and Streamable HTTP transport
-- **Firebase Analytics** - Cloud-based analytics with Firebase Realtime Database and local backup
-- **VPS Deployment Ready** - Docker, Nginx, and GitHub Actions auto-deployment support
-- **Analytics Dashboard** - Visual dashboard with Chart.js for MCP server usage monitoring
+- **One search for everything**: `datagovsg_search_all` covers ~4,600 datasets, ~1,400 collections, 18 real-time APIs and SingStat tables. Each result says which tool to call next.
+- **Working dataset search**: data.gov.sg has no search API, so the server keeps a local index of the whole catalogue, refreshed daily.
+- **Real-time Singapore conditions**: forecasts (2-hour, 24-hour, 4-day), station readings, PSI/PM2.5 with health advice, UV, heat stress (WBGT), lightning, PUB flood alerts, rain radar, plus a one-call `get_current_conditions` for any area.
+- **Transport**: HDB carpark availability searchable by address or location, taxi availability near a point, traffic cameras.
+- **Dataset querying**: typed rows with filters, sorting and pagination, CSV output, and one-call download links (including GeoJSON map data).
+- **Official statistics**: SingStat search with automatic word fallback, table metadata and filtered data.
+- **Historical queries**: real-time tools accept a past `date`.
+- **Rate-limit aware**: requests are queued under data.gov.sg limits, cached, and retried after a 429.
+- **Bring your own key (optional)**: use your own data.gov.sg API key through the [MCP Key Service](https://mcpkeys.techmavie.digital) for a separate quota.
+- Built-in analytics endpoints and dashboard.
 
-## Quick Start (Hosted Server)
+## Quick Start
 
-The easiest way to use this MCP server is via the hosted endpoint. **No installation required!**
+### Hosted server
 
-**Server URL:**
-```
+No key needed:
+
+```text
 https://mcp.techmavie.digital/datagovsg/mcp
 ```
 
-### Client Configuration
-
-For Claude Desktop / Cursor / Windsurf, add to your MCP configuration:
+Example MCP client config:
 
 ```json
 {
   "mcpServers": {
-    "singapore-data": {
+    "singapore-opendata": {
       "transport": "streamable-http",
       "url": "https://mcp.techmavie.digital/datagovsg/mcp"
     }
@@ -43,256 +46,224 @@ For Claude Desktop / Cursor / Windsurf, add to your MCP configuration:
 }
 ```
 
-### Test with MCP Inspector
+### Using your own data.gov.sg API key (optional)
 
-```bash
-npx @modelcontextprotocol/inspector
-# Select "Streamable HTTP"
-# Enter URL: https://mcp.techmavie.digital/datagovsg/mcp
-```
+By default every request uses the server's own data.gov.sg API key. For heavy use, you can bring your own key and get a separate rate-limit quota:
 
-## Available Tools
+1. Create a key at [data.gov.sg](https://data.gov.sg) (log in → **API Keys**).
+2. Register it at [mcpkeys.techmavie.digital](https://mcpkeys.techmavie.digital) using the **Singapore Open Data (data.gov.sg)** connector. You get a `usr_...` key.
+3. Connect with any of:
+   - `https://mcp.techmavie.digital/datagovsg/mcp?api_key=usr_...`
+   - `https://mcp.techmavie.digital/datagovsg/mcp/usr_...`
+   - Header `X-API-Key: usr_...` (or `Authorization: Bearer usr_...`)
 
-### Data.gov.sg Collections
+Raw data.gov.sg keys are not accepted over HTTP; use the key service. Ask `datagovsg_hello` which key a connection is using.
 
-- **`datagovsg_list_collections`** - List all collections on data.gov.sg
-- **`datagovsg_get_collection`** - Get metadata for a specific collection (with optional dataset metadata)
+### Self-hosted
 
-### Data.gov.sg Datasets
-
-- **`datagovsg_list_datasets`** - List all datasets on data.gov.sg
-- **`datagovsg_get_dataset_metadata`** - Get metadata for a specific dataset
-- **`datagovsg_search_dataset`** - Search for data within a dataset using CKAN datastore
-- **`datagovsg_initiate_download`** - Initiate download of a dataset with optional filtering
-- **`datagovsg_poll_download`** - Check download status and get download URL
-
-### SingStat Table Builder
-
-- **`singstat_search_resources`** - Search for SingStat tables by keyword
-- **`singstat_get_metadata`** - Get metadata for a specific SingStat table
-- **`singstat_get_table_data`** - Get data from a SingStat table with optional filtering
-
-### Test
-
-- **`hello`** - A simple test tool to verify the MCP server is working correctly
-
-## Installation
+Detailed VPS instructions are in [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md).
 
 ```bash
 npm install
+cp .env.example .env    # add DATAGOVSG_API_KEY
+npm run build
+npm start
 ```
+
+## Tool Overview
+
+Full parameter reference and examples: [TOOLS.md](TOOLS.md).
+
+### Search and discovery
+
+| Tool | Purpose |
+|------|---------|
+| `datagovsg_search_all` | ⭐ Start here. Datasets, collections, real-time APIs and SingStat tables in one search |
+| `datagovsg_search_datasets` | Search/browse datasets with format, agency and date filters |
+| `datagovsg_list_collections` | Search/browse collections (groups of datasets) |
+
+### Datasets
+
+| Tool | Purpose |
+|------|---------|
+| `datagovsg_get_collection` | Collection details and its datasets |
+| `datagovsg_get_dataset_metadata` | Dataset details and column names/types |
+| `datagovsg_query_dataset` | Query rows: filters, full-text search, sort, pagination, CSV |
+| `datagovsg_get_download_url` | Download link for the full file (CSV with optional filters, GeoJSON, XLSX, PDF) |
+
+### Weather and environment (real-time, NEA/PUB)
+
+| Tool | Purpose |
+|------|---------|
+| `datagovsg_get_current_conditions` | One-call summary for an area or coordinates |
+| `datagovsg_get_weather_forecast` | 2-hour area nowcast, 24-hour regional forecast, 4-day outlook |
+| `datagovsg_get_weather_readings` | Temperature, rainfall, humidity, wind by station or nearest |
+| `datagovsg_get_air_quality` | PSI and PM2.5 with health bands and advice |
+| `datagovsg_get_uv_index` | Hourly UV index |
+| `datagovsg_get_heat_stress` | WBGT heat stress readings |
+| `datagovsg_get_lightning` | Lightning strikes, optionally near a location |
+| `datagovsg_get_flood_alerts` | PUB flash flood alerts |
+| `datagovsg_get_weather_radar` | Rain radar image (beta) |
+
+### Transport (real-time)
+
+| Tool | Purpose |
+|------|---------|
+| `datagovsg_get_carpark_availability` | HDB carpark lots near a location, by address or carpark number |
+| `datagovsg_get_taxi_availability` | Taxi count island-wide and near a location |
+| `datagovsg_get_traffic_images` | Traffic camera snapshots (currently checkpoint cameras only) |
+
+### SingStat (official statistics)
+
+| Tool | Purpose |
+|------|---------|
+| `singstat_search_tables` | Find statistics tables (GDP, CPI, population...) |
+| `singstat_get_table_metadata` | Series, frequency and time coverage of a table |
+| `singstat_get_table_data` | Values, filtered by series and time period |
+
+### Misc
+
+| Tool | Purpose |
+|------|---------|
+| `datagovsg_hello` | Server status, key type in use, catalogue index status |
 
 ## Local Development
 
 ```bash
-# Run HTTP server in development mode
-npm run dev:http
+npm install
+npm run dev                 # tsx, http://localhost:8080/mcp
 
-# Or build and run production version
-npm run build
-npm run start:http
+# In another terminal: call every tool against the live APIs
+npm run smoke
+MCP_URL=https://mcp.techmavie.digital/datagovsg/mcp npm run smoke
 
-# Test health endpoint
-curl http://localhost:8080/health
-
-# Test MCP endpoint
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+npm run typecheck
+npm run lint
+npm run format
 ```
 
-## Usage Examples
-
-### Search a Dataset
-
-```javascript
-// Search population data
-datagovsg_search_dataset({
-  resource_id: "d_8b84c4ee58e3cfc0ece0d773c8ca6abc",
-  q: "2023",
-  limit: 10
-})
-```
-
-### Get Collection with Datasets
-
-```javascript
-// Get collection 522 with all dataset metadata
-datagovsg_get_collection({
-  collectionId: "522",
-  withDatasetMetadata: true
-})
-```
-
-### Search SingStat Tables
-
-```javascript
-// Search for GDP data
-singstat_search_resources({
-  keyword: "GDP",
-  searchOption: "all"
-})
-
-// Get table data with time filter
-singstat_get_table_data({
-  resourceId: "M015171",
-  timeFilter: "2023",
-  limit: 100
-})
-```
-
-## Analytics Dashboard
-
-The hosted server includes a built-in analytics dashboard:
-
-**Dashboard URL:** [`https://mcp.techmavie.digital/datagovsg/analytics/dashboard`](https://mcp.techmavie.digital/datagovsg/analytics/dashboard)
-
-### Analytics Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `/analytics` | Full analytics summary (JSON) |
-| `/analytics/tools` | Detailed tool usage stats (JSON) |
-| `/analytics/dashboard` | Visual dashboard with charts (HTML) |
-
-The dashboard tracks:
-- Total requests and tool calls
-- Tool usage distribution
-- Hourly request trends (last 24 hours)
-- Requests by endpoint
-- Top clients by user agent
-- Recent tool calls feed
-
-Auto-refreshes every 30 seconds.
-
-## Deployment
-
-### Production Server
-
-The MCP server is deployed at:
-- **Endpoint:** `https://mcp.techmavie.digital/datagovsg/mcp`
-- **Health Check:** `https://mcp.techmavie.digital/datagovsg/health`
-- **Analytics Dashboard:** `https://mcp.techmavie.digital/datagovsg/analytics/dashboard`
-- **Transport:** Streamable HTTP
-
-### Self-Hosting (VPS)
-
-To deploy your own instance:
+Test with MCP Inspector:
 
 ```bash
-# Using Docker
-docker compose up -d --build
-
-# Or run directly
-npm run build
-npm run start:http
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP, URL: http://localhost:8080/mcp
 ```
 
-### Auto-Deployment
+## Analytics
 
-This repository includes a GitHub Actions workflow for automatic VPS deployment. When you push to `main`, the server automatically redeploys.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/analytics` | GET | Usage summary, cache hit rate, upstream stats, catalogue status |
+| `/analytics/tools` | GET | Tool usage counts |
+| `/analytics/dashboard` | GET | Visual dashboard |
+| `/analytics/reset` | POST | Reset (requires `ANALYTICS_RESET_KEY`) |
+| `/analytics/import` | POST | Merge exported data (requires `ANALYTICS_RESET_KEY`) |
 
-Required GitHub Actions secrets:
-- `VPS_HOST` - Your VPS IP address
-- `VPS_USERNAME` - SSH username (e.g., `root`)
-- `VPS_PORT` - SSH port (e.g., `22`)
-- `VPS_SSH_KEY` - Private SSH key for authentication
+Analytics are stored in `/app/data/analytics.json` and Firebase Realtime Database at `/mcp-analytics/mcp-datagovsg`. Client IPs are never stored, only a salted hash used to count unique clients.
 
 ## Configuration
 
-### Environment Variables
+### Core environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | HTTP server port |
-| `HOST` | `0.0.0.0` | HTTP server host |
-| `NODE_ENV` | — | Node environment |
-| `ANALYTICS_DIR` | `/app/data` | Analytics data directory |
-| `ANALYTICS_RESET_KEY` | — | Secret key for `/analytics/reset` endpoint |
-| `FIREBASE_DATABASE_URL` | — | Firebase Realtime Database URL |
-| `FIREBASE_CREDENTIALS_PATH` | `.credentials/firebase-service-account.json` | Path to Firebase credentials |
+| `DATAGOVSG_API_KEY` | – | Server's data.gov.sg API key, used unless the caller brings their own. Strongly recommended |
+| `DATAGOVSG_API_KEY_TIER` | `production` | `production` or `developer`; sets local request pacing |
+| `KEY_SERVICE_URL` | – | Full MCP Key Service resolve URL, e.g. `http://mcp-key-service:8090/internal/resolve` |
+| `KEY_SERVICE_TOKEN` | – | This server's bearer token in the key service (`datagovsg:<token>`) |
+| `PORT` / `HOST` | `8080` / `0.0.0.0` | HTTP listen address |
+| `DATA_DIR` | `./data` (`/app/data` in Docker) | Analytics backup and catalogue index |
+| `ANALYTICS_RESET_KEY` | – | Enables the reset/import endpoints |
+| `ANALYTICS_SALT` | random | Salt for hashing client IPs (set it for stable unique-client counts) |
+| `FIREBASE_DATABASE_URL` | – | Firebase RTDB URL (analytics persistence) |
+| `FIREBASE_CREDENTIALS_PATH` | `.credentials/firebase-service-account.json` | Service account file |
+| `CATALOG_REFRESH_MS` | `86400000` | How often the catalogue index is rebuilt |
+
+See [.env.example](.env.example) for all options.
+
+### data.gov.sg rate limits
+
+Per 10 seconds, per API key (or per IP without a key):
+
+| API | No key | Developer key | Production key |
+|-----|--------|---------------|----------------|
+| Real-time | 6 | 12 | 30 |
+| Dataset query | 4 | 8 | 20 |
+| Download | 2 | 4 | 10 |
+
+The server queues requests to stay within these limits, caches responses (60 s for real-time data, 5 minutes for queries, 6 hours for metadata), and retries once after a 429.
 
 ## Project Structure
 
 ```
-mcp-datagovsg/
-├── src/
-│   ├── index.ts                  # Main MCP server (stdio/Smithery transport)
-│   ├── http-server.ts            # Streamable HTTP server for VPS deployment
-│   ├── datagovsg.tools.ts        # Data.gov.sg API tools
-│   ├── singstat.tools.ts         # SingStat Table Builder API tools
-│   ├── firebase-analytics.ts     # Firebase analytics persistence
-│   └── types.ts                  # TypeScript type definitions
-├── deploy/
-│   └── nginx-mcp.conf            # Nginx reverse proxy configuration
-├── .github/
-│   └── workflows/
-│       └── deploy-vps.yml        # GitHub Actions auto-deployment
-├── Dockerfile                    # Docker container configuration
-├── docker-compose.yml            # Docker Compose orchestration
-├── package.json                  # Project dependencies and scripts
-├── tsconfig.json                 # TypeScript configuration
-├── .env.example                  # Environment variables template
-└── README.md                     # This file
+src/
+├── http-server.ts          # Express server: per-request MCP transport, key-service auth, analytics routes
+├── server.ts               # createServer(): registers all tools + server instructions
+├── config.ts               # Env vars, API base URLs, cache TTLs, rate-limit table
+├── search.tools.ts         # search_all, search_datasets, list_collections
+├── datasets.tools.ts       # get_collection, get_dataset_metadata, query_dataset, get_download_url
+├── weather.tools.ts        # Real-time weather/environment tools
+├── transport.tools.ts      # Carpark, taxi, traffic camera tools
+├── singstat.tools.ts       # SingStat Table Builder tools
+├── analytics.ts            # Tracking + persistence
+├── analytics-dashboard.ts  # Dashboard HTML
+├── firebase-analytics.ts   # Firebase RTDB persistence
+└── utils/
+    ├── http-client.ts      # axios client: API key, rate limiting, caching, error handling
+    ├── rate-limiter.ts     # Sliding-window request queue
+    ├── cache.ts            # TTL cache with in-flight de-duplication
+    ├── catalog-index.ts    # Local index of the data.gov.sg catalogue
+    ├── search.ts           # Tokenising, synonyms, relevance scoring
+    ├── realtime-catalog.ts # Real-time API → tool mapping
+    ├── geo.ts              # Distances, SVY21 → WGS84
+    ├── key-service.ts      # MCP Key Service client
+    ├── format.ts           # Output formatting helpers
+    └── tool-helpers.ts     # registerReadOnlyTool, ok/fail envelopes
 ```
 
-## API Information
+## Data Sources
 
-### Data.gov.sg APIs
-- **No authentication required** (public APIs)
-- API responses use `code: 0` for success
-- Dataset IDs start with `d_` prefix
-- Collection IDs are numeric strings
+| Source | Base URL | Used for |
+|--------|----------|----------|
+| data.gov.sg catalogue | `api-production.data.gov.sg/v2/public/api` | Collections and dataset metadata |
+| data.gov.sg datastore | `data.gov.sg/api/action/datastore_search` | Row queries |
+| data.gov.sg downloads | `api-open.data.gov.sg/v1/public/api` | File downloads |
+| data.gov.sg real-time | `api-open.data.gov.sg/v2/real-time/api` | Weather, environment, floods, radar |
+| data.gov.sg transport | `api.data.gov.sg/v1/transport` | Carparks, taxis, traffic images |
+| SingStat Table Builder | `tablebuilder.singstat.gov.sg/api/table` | Official statistics |
 
-### SingStat Table Builder APIs
-- **No authentication required** (public APIs)
-- Resource IDs are alphanumeric (e.g., M015171)
-- Supports time series, cross-sectional, and multi-dimensional data cubes
-- Search works best with single keywords rather than complex phrases
+Data from data.gov.sg is provided under the [Singapore Open Data Licence v1.0](https://data.gov.sg/open-data-licence). Tool responses include a `source` field for attribution.
 
 ## Troubleshooting
 
-### Container Issues
-
 ```bash
-# Check container status
-docker compose ps
+# Health (shows API key, key service, Firebase and catalogue status)
+curl https://mcp.techmavie.digital/datagovsg/health
 
-# View logs
-docker compose logs -f
-
-# Restart container
-docker compose restart
-```
-
-### Test MCP Connection
-
-```bash
 # List tools
 curl -X POST https://mcp.techmavie.digital/datagovsg/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-
-# Call hello tool
-curl -X POST https://mcp.techmavie.digital/datagovsg/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"hello","arguments":{}}}'
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 ```
 
-## Contributing
+| Symptom | Cause |
+|---------|-------|
+| Dataset search says the index is being built | First start only; the catalogue crawl takes ~20 seconds |
+| Rate limit errors | No API key configured, or it expired (data.gov.sg treats invalid keys as anonymous) |
+| `401 Invalid, revoked or suspended API key` | The `usr_` key is wrong or revoked; remove it to use the shared key |
+| Slow `search_all` | SingStat search takes ~7 seconds per new query; results are cached for an hour |
 
-1. Fork repository
-2. Create feature branch
-3. Commit changes
-4. Create pull request
+More in [deploy/DEPLOYMENT.md](deploy/DEPLOYMENT.md#troubleshooting).
 
 ## License
 
-MIT - See [LICENSE](./LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-- [data.gov.sg](https://data.gov.sg/) - Singapore Open Data Portal
-- [SingStat Table Builder](https://tablebuilder.singstat.gov.sg/) - Department of Statistics Singapore
-- [AniruddhaAdhikary/gahmen-mcp](https://github.com/AniruddhaAdhikary/gahmen-mcp) - Original MCP server
-- [Model Context Protocol](https://modelcontextprotocol.io/) for the MCP framework
+- [data.gov.sg](https://data.gov.sg/), Singapore's open data portal (Open Government Products)
+- [SingStat Table Builder](https://tablebuilder.singstat.gov.sg/), Department of Statistics Singapore
+- [National Environment Agency](https://www.nea.gov.sg/), [PUB](https://www.pub.gov.sg/), [HDB](https://www.hdb.gov.sg/) and [LTA](https://www.lta.gov.sg/) for the real-time data
+- [aniruddha-adhikary/gahmen-mcp](https://github.com/aniruddha-adhikary/gahmen-mcp), the original MCP server this project started from
+- [Model Context Protocol](https://modelcontextprotocol.io/)
