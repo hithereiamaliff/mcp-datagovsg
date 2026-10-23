@@ -114,7 +114,9 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.get('/health', (req: Request, res: Response) => {
-  trackRequest(req, '/health');
+  // Internal probes (the Docker healthcheck every 30s, the deploy script) hit the port
+  // directly. Count only requests that came through nginx, which sets X-Forwarded-For.
+  if (req.headers['x-forwarded-for']) trackRequest(req, '/health');
   res.json({
     status: 'healthy',
     server: SERVER_NAME,
