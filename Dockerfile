@@ -33,8 +33,9 @@ USER mcp
 
 EXPOSE 8080
 
-# busybox wget is available in alpine images
+# busybox wget is available in alpine images. 127.0.0.1, not localhost: the server
+# listens on IPv4 only (HOST=0.0.0.0), and localhost can resolve to ::1 in the container
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
 
 CMD ["node", "dist/http-server.js"]
