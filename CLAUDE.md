@@ -78,6 +78,7 @@ Other notes:
 - `src/analytics.ts` tracks requests at the HTTP layer and saves every 30s to `DATA_DIR/analytics.json` and Firebase RTDB `/mcp-analytics/mcp-datagovsg`.
 - Client IPs are stored only as salted HMAC hashes (`ANALYTICS_SALT`). Never expose per-client data on `/analytics`.
 - Firebase drops empty objects, so always normalise loaded data with defaults (see `normalise()`).
+- Startup loads whichever copy is newer, never Firebase blindly: Firebase `lastUpdated` vs the later of the file's `lastUpdated` and its mtime. `saveAnalytics()` stamps `lastUpdated` on both copies and does nothing until `initAnalytics()` has loaded them.
 
 ## Deployment
 - VPS path `/opt/mcp-servers/datagovsg`, container `mcp-datagovsg`, host port `127.0.0.1:8098`, nginx `location /datagovsg/`.
