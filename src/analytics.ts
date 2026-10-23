@@ -35,6 +35,8 @@ export interface Analytics {
   clientsByHash: Record<string, number>;
   clientsByUserAgent: Record<string, number>;
   hourlyRequests: Record<string, number>;
+  /** Stamped on every save, so startup can tell which stored copy is newer. */
+  lastUpdated?: string;
 }
 
 const ANALYTICS_FILE = path.join(DATA_DIR, 'analytics.json');
@@ -79,23 +81,60 @@ function normalise(data: Partial<Analytics> & Record<string, unknown>): Analytic
 }
 
 let analytics: Analytics = freshAnalytics();
+// Set once the stored copies are loaded; saves wait for it (see saveAnalytics)
+let initialised = false;
 
 // ============================================================================
 // Persistence
 // ============================================================================
 
-async function loadAnalytics(): Promise<Analytics> {
-  const fromFirebase = await loadAnalyticsFromFirebase();
-  if (fromFirebase) return normalise(fromFirebase);
+/** Milliseconds for an ISO timestamp; 0 (oldest) when missing or invalid. */
+function timeOf(value: unknown): number {
+  const time = typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isNaN(time) ? 0 : time;
+}
 
+const savedAtLabel = (time: number) =>
+  time > 0 ? `saved ${new Date(time).toISOString()}` : 'save time unknown';
+
+function loadAnalyticsFromFile(): { data: Record<string, unknown>; savedAt: number } | null {
   try {
-    if (fs.existsSync(ANALYTICS_FILE)) {
-      const loaded = JSON.parse(fs.readFileSync(ANALYTICS_FILE, 'utf-8'));
-      console.log(`[analytics] Loaded from ${ANALYTICS_FILE}`);
-      return normalise(loaded);
-    }
+    if (!fs.existsSync(ANALYTICS_FILE)) return null;
+    const data = JSON.parse(fs.readFileSync(ANALYTICS_FILE, 'utf-8'));
+    // Files saved before lastUpdated was stamped locally carry a stale value copied
+    // from Firebase, so also use the file's mtime and take the later of the two
+    const savedAt = Math.max(timeOf(data.lastUpdated), fs.statSync(ANALYTICS_FILE).mtimeMs);
+    return { data, savedAt };
   } catch (error) {
     console.error('[analytics] Failed to load from file:', error);
+    return null;
+  }
+}
+
+/**
+ * Load the newer of the local file and the Firebase copy. Either can be stale:
+ * Firebase after it was unavailable for a while (local saves carried on), the
+ * local file after the data volume was replaced.
+ */
+async function loadAnalytics(): Promise<Analytics> {
+  const fromFirebase = await loadAnalyticsFromFirebase();
+  const fromFile = loadAnalyticsFromFile();
+  const firebaseSavedAt = timeOf(fromFirebase?.lastUpdated);
+
+  // Ties go to the local file: it is the exact JSON, without Firebase's key encoding
+  if (fromFile && (!fromFirebase || fromFile.savedAt >= firebaseSavedAt)) {
+    const other = fromFirebase
+      ? `Firebase copy ${savedAtLabel(firebaseSavedAt)}`
+      : 'no Firebase copy';
+    console.log(
+      `[analytics] Loaded from ${ANALYTICS_FILE} (${savedAtLabel(fromFile.savedAt)}; ${other})`
+    );
+    return normalise(fromFile.data);
+  }
+  if (fromFirebase) {
+    const other = fromFile ? `local file ${savedAtLabel(fromFile.savedAt)}` : 'no local copy';
+    console.log(`[analytics] Loaded from Firebase (${savedAtLabel(firebaseSavedAt)}; ${other})`);
+    return normalise(fromFirebase);
   }
   console.log('[analytics] Starting fresh');
   return freshAnalytics();
@@ -109,7 +148,12 @@ function pruneHourly(): void {
 }
 
 export async function saveAnalytics(): Promise<void> {
+  // Saving before the stored copies are loaded would overwrite them with near-empty
+  // counts, and that copy would then look newest at the next startup
+  if (!initialised) return;
   pruneHourly();
+  // One stamp for both copies, so loadAnalytics() can tell which is newer
+  analytics.lastUpdated = new Date().toISOString();
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(analytics));
@@ -127,6 +171,7 @@ export async function initAnalytics(): Promise<void> {
   // Requests tracked while loading are added on top
   analytics.totalRequests += startupCounts.totalRequests;
   analytics.totalToolCalls += startupCounts.totalToolCalls;
+  initialised = true;
   console.log('[analytics] Initialised:', {
     totalRequests: analytics.totalRequests,
     totalToolCalls: analytics.totalToolCalls,

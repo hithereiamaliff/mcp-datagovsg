@@ -100,9 +100,8 @@ function mapKeys(value: unknown, rules: [RegExp, string][]): unknown {
 export async function saveAnalyticsToFirebase(analytics: Record<string, unknown>): Promise<void> {
   if (!initialiseFirebase() || !db) return;
   try {
-    const encoded = mapKeys(analytics, ENCODE) as Record<string, unknown>;
-    encoded.lastUpdated = new Date().toISOString();
-    await db.ref(FIREBASE_ANALYTICS_PATH).set(encoded);
+    // lastUpdated is stamped by the caller, so it matches the local file's copy
+    await db.ref(FIREBASE_ANALYTICS_PATH).set(mapKeys(analytics, ENCODE));
   } catch (error) {
     console.error('[firebase] Failed to save analytics:', error);
   }
